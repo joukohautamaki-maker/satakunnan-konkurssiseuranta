@@ -1,122 +1,106 @@
 import os
-import time
 import requests
 import pandas as pd
 import matplotlib
-matplotlib.use('Agg') # Estää palvelinympäristön graafiset virheet
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from datetime import datetime
 
-TARGET_MUNICIPALITIES = {
+# Seurattavat kunnat
+TARGET_MUNICIPALITIES = [
     "Kokemäki", "Harjavalta", "Nakkila", "Ulvila", "Pori",
     "Merikarvia", "Pomarkku", "Siikainen", "Karvia",
     "Kankaanpää", "Jämijärvi", "Eurajoki"
-}
+]
 
-PRH_BIS_API = "https://avoindata.prh.fi/bis/v1"
-START_DATE = "2026-01-01"
+# Tilastokeskuksen StatFin-konkurssitilaston PxWeb API
+STATFIN_API_URL = "https://pxdata.stat.fi:443/PxWeb/api/v1/fi/StatFin/konk/statfin_konk_pxt_12vh.json"
 
 def ensure_directories():
     os.makedirs("reports", exist_ok=True)
     os.makedirs("data", exist_ok=True)
 
-def fetch_bankruptcies():
-    print(f"Haetaan PRH-dataa alkaen {START_DATE}...")
-    records = []
-
-    params = {
-        "totalResults": "true",
-        "maxResults": 1000,
-        "companyRegistrationFrom": START_DATE
+def fetch_statfin_bankruptcies():
+    """Hakee konkurssitilastot kuukausittain ja kunnittain Tilastokeskuksen rajapinnasta."""
+    print("Haetaan konkurssitilastoja Tilastokeskuksen (StatFin) rajapinnasta...")
+    
+    # JSON-stat -kysely kohdekunnille ja vuoden 2026 kuukausille
+    query = {
+        "query": [
+            {
+                "code": "Alue",
+                "selection": {
+                    "filter": "item",
+                    "values": [f"KU{m}" for m in ["408", "079", "531", "886", "609", "484", "608", "747", "230", "214", "181", "051"]] # Kuntakoodit
+                }
+            },
+            {
+                "code": "Kuukausi",
+                "selection": {
+                    "filter": "item",
+                    "values": ["2026M01", "2026M02", "2026M03", "2026M04", "2026M05", "2026M06", "2026M07", "2026M08"]
+                }
+            },
+            {
+                "code": "Tiedot",
+                "selection": {
+                    "filter": "item",
+                    "values": ["konk_maara"]
+                }
+            }
+        ],
+        "response": {
+            "format": "json-stat2"
+        }
     }
 
+    records = []
+    
     try:
-        res = requests.get(PRH_BIS_API, params=params, timeout=30)
-        res.raise_for_status()
-        data = res.json().get("results", [])
+        res = requests.post(STATFIN_API_URL, json=query, timeout=30)
+        if res.status_code == 200:
+            json_data = res.json()
+            dimension = json_data.get("dimension", {})
+            values = json_data.get("value", [])
+            
+            munis = list(dimension.get("Alue", {}).get("category", {}).get("label", {}).values())
+            months = list(dimension.get("Kuukausi", {}).get("category", {}).get("label", {}).values())
+            
+            idx = 0
+            for m in munis:
+                for mo in months:
+                    val = values[idx] if idx < len(values) else 0
+                    if val is not None and val > 0:
+                        records.append({
+                            "Kunta": m,
+                            "Kuukausi": mo,
+                            "Konkurssien Määrä": int(val),
+                            "Toimiala": "Eri toimialat (Tilastokeskus)"
+                        })
+                    idx += 1
+        else:
+            print(f"StatFin API palautti koodin {res.status_code}. Luodaan seurantarakenne.")
     except Exception as e:
-        print(f"Virhe hakukyselyssä: {e}")
-        data = []
+        print(f"Virhe haettaessa StatFin-dataa: {e}")
 
-    print(f"Käsitellään {len(data)} merkintää...")
-    processed_ids = set()
-
-    for item in data:
-        business_id = item.get("businessId")
-        if not business_id or business_id in processed_ids:
-            continue
-
-        processed_ids.add(business_id)
-        time.sleep(0.05)
-
-        try:
-            det_res = requests.get(f"{PRH_BIS_API}/{business_id}", timeout=10)
-            if det_res.status_code != 200:
-                continue
-
-            results_list = det_res.json().get("results", [])
-            if not results_list:
-                continue
-
-            det_json = results_list[0]
-            reg_office = det_json.get("registeredOffice", "")
-            reg_office_clean = reg_office.strip().capitalize() if reg_office else ""
-
-            matched_muni = None
-            for target in TARGET_MUNICIPALITIES:
-                if target.lower() == reg_office_clean.lower():
-                    matched_muni = target
-                    break
-
-            if matched_muni:
-                liquidation = det_json.get("liquidations", [])
-                status_entries = det_json.get("registeredEntries", [])
-                
-                is_bankrupt = False
-                notice_date = item.get("registrationDate") or START_DATE
-
-                if liquidation:
-                    is_bankrupt = True
-                else:
-                    for entry in status_entries:
-                        desc = str(entry.get("description", "")).lower()
-                        if "konkurssi" in desc or "selvitystila" in desc:
-                            is_bankrupt = True
-                            if entry.get("registrationDate"):
-                                notice_date = entry.get("registrationDate")
-                            break
-
-                b_lines = det_json.get("businessLines", [])
-                main_industry = b_lines[0].get("name", "Ei ilmoitettu") if (b_lines and isinstance(b_lines, list)) else "Ei ilmoitettu"
-
-                records.append({
-                    "Y-tunnus": business_id,
-                    "Yrityksen Nimi": det_json.get("name", "Tuntematon"),
-                    "Kunta": matched_muni,
-                    "Toimiala": main_industry,
-                    "Rekisteröintipäivä": notice_date,
-                    "Tila": "Konkurssi/Selvitystila" if is_bankrupt else "Uusi yritys"
-                })
-        except Exception as err:
-            print(f"Ohitettiin Y-tunnus {business_id}: {err}")
-            continue
-
+    # Jos StatFin-rajapinta ei ole vielä julkaissut tuoreimman kuukauden lukuja, pidetään rakenne voimassa
     df = pd.DataFrame(records)
-    if not df.empty:
-        df["Rekisteröintipäivä"] = pd.to_datetime(df["Rekisteröintipäivä"], errors='coerce').fillna(pd.to_datetime(START_DATE))
-        df["Kuukausi"] = df["Rekisteröintipäivä"].dt.to_period("M").astype(str)
+    if df.empty:
+        df = pd.DataFrame(columns=["Kunta", "Kuukausi", "Konkurssien Määrä", "Toimiala"])
+        
     return df
 
 def generate_visualizations(df):
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     
+    # Kuukausittainen diagrammi
     plt.figure(figsize=(10, 6))
-    if not df.empty:
-        monthly_counts = df.groupby("Kuukausi").size()
-        ax = monthly_counts.plot(kind="bar", color="#1f77b4", edgecolor="#0d3b66", linewidth=1.2)
-        plt.title(f"Rekisteröityjen yritysten/ilmoitusten määrä kuukausittain (1.1.2026 alkaen)\nKohdekunnat ({len(TARGET_MUNICIPALITIES)} kpl)", fontsize=11, pad=15)
+    if not df.empty and "Konkurssien Määrä" in df.columns:
+        monthly_sum = df.groupby("Kuukausi")["Konkurssien Määrä"].sum()
+        ax = monthly_sum.plot(kind="bar", color="#1f77b4", edgecolor="#0d3b66", linewidth=1.2)
+        plt.title(f"Konkurssien määrä kuukausittain (1.1.2026 alkaen)\nSeurattavat 12 kuntaa", fontsize=11, pad=15)
         plt.xlabel("Kuukausi", fontsize=11)
-        plt.ylabel("Määrä (kpl)", fontsize=11)
+        plt.ylabel("Konkurssit (kpl)", fontsize=11)
         plt.xticks(rotation=0)
         plt.grid(axis="y", linestyle="--", alpha=0.7)
         
@@ -127,20 +111,21 @@ def generate_visualizations(df):
                             ha='center', va='bottom', fontsize=10, fontweight='bold', xytext=(0, 3), 
                             textcoords='offset points')
     else:
-        plt.text(0.5, 0.5, "Ei rekisteröityjä merkintöjä valitulta ajalta.", horizontalalignment='center', verticalalignment='center', fontsize=12)
-        plt.title("Tilastot kuukausittain (1.1.2026 alkaen)")
+        plt.text(0.5, 0.5, "Ei rekisteröityjä konkursseja seuranta-aikaväliltä.", horizontalalignment='center', verticalalignment='center', fontsize=12)
+        plt.title("Konkurssit kuukausittain (2026)")
 
     plt.tight_layout()
     plt.savefig("reports/kuukausittaiset_konkurssit.png", dpi=300)
     plt.close()
 
+    # Kuntakohtainen jakauma
     plt.figure(figsize=(10, 6))
-    if not df.empty and "Toimiala" in df.columns:
-        industry_counts = df["Toimiala"].value_counts().head(10)
-        ax = industry_counts.plot(kind="barh", color="#2ca02c", edgecolor="#1b661b", linewidth=1.2)
-        plt.title("Yritykset toimialoittain (Top 10)", fontsize=11, pad=15)
-        plt.xlabel("Määrä (kpl)", fontsize=11)
-        plt.ylabel("Toimiala", fontsize=11)
+    if not df.empty and "Konkurssien Määrä" in df.columns:
+        muni_sum = df.groupby("Kunta")["Konkurssien Määrä"].sum().sort_values(ascending=False)
+        ax = muni_sum.plot(kind="barh", color="#2ca02c", edgecolor="#1b661b", linewidth=1.2)
+        plt.title("Konkurssit kunnittain (1.1.2026 alkaen)", fontsize=11, pad=15)
+        plt.xlabel("Konkurssit (kpl)", fontsize=11)
+        plt.ylabel("Kunta", fontsize=11)
         plt.gca().invert_yaxis()
         plt.grid(axis="x", linestyle="--", alpha=0.7)
         
@@ -151,8 +136,8 @@ def generate_visualizations(df):
                             ha='left', va='center', fontsize=10, fontweight='bold', xytext=(5, 0), 
                             textcoords='offset points')
     else:
-        plt.text(0.5, 0.5, "Ei toimialadataa saatavilla.", horizontalalignment='center', verticalalignment='center', fontsize=12)
-        plt.title("Toimialajakauma")
+        plt.text(0.5, 0.5, "Ei kuntakohtaista dataa saatavilla.", horizontalalignment='center', verticalalignment='center', fontsize=12)
+        plt.title("Konkurssit kunnittain")
 
     plt.tight_layout()
     plt.savefig("reports/konkurssit_toimialoittain.png", dpi=300)
@@ -161,11 +146,11 @@ def generate_visualizations(df):
 def generate_markdown_report(df):
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    report_md = f"""# Satakunnan ja lähialueiden yritys- ja konkurssiseuranta
+    report_md = f"""# Satakunnan ja lähialueiden konkurssiseuranta
 
 **Päivitetty:** {now_str}  
 **Aikaraja:** 1.1.2026 alkaen (Kumulatiivinen)  
-**Seurattavat kunnat ({len(TARGET_MUNICIPALITIES)} kpl):** {', '.join(sorted(TARGET_MUNICIPALITIES))}
+**Seurattavat kunnat (12 kpl):** {', '.join(sorted(TARGET_MUNICIPALITIES))}
 
 ---
 
@@ -175,9 +160,9 @@ def generate_markdown_report(df):
 
 ---
 
-## 🏭 Toimialajakauma
+## 🏛️ Konkurssit kunnittain
 
-![Konkurssit toimialoittain](konkurssit_toimialoittain.png)
+![Konkurssit kunnittain](konkurssit_toimialoittain.png)
 
 ---
 
@@ -185,39 +170,23 @@ def generate_markdown_report(df):
 
 """
     if not df.empty:
-        total_count = len(df)
-        report_md += f"**Yhteensä merkintöjä:** {total_count} kpl\n\n"
-        
-        report_md += "### Kunnat\n\n"
-        muni_summary = df["Kunta"].value_counts().reset_index()
-        muni_summary.columns = ["Kunta", "Määrä (kpl)"]
-        report_md += muni_summary.to_markdown(index=False) + "\n\n"
-
-        report_md += "### Rekisteröidyt tapaukset\n\n"
-        recent_df = df.sort_values(by="Rekisteröintipäivä", ascending=False)
-        recent_display = recent_df[["Rekisteröintipäivä", "Y-tunnus", "Yrityksen Nimi", "Kunta", "Toimiala", "Tila"]].copy()
-        recent_display["Rekisteröintipäivä"] = recent_display["Rekisteröintipäivä"].dt.strftime("%Y-%m-%d")
-        report_md += recent_display.to_markdown(index=False) + "\n\n"
+        total_count = df["Konkurssien Määrä"].sum()
+        report_md += f"**Yhteensä rekisteröityjä konkursseja:** {total_count} kpl\n\n"
+        report_md += df.to_markdown(index=False) + "\n\n"
     else:
-        report_md += "_Ei rekisteröityjä merkintöjä valitulta ajanjaksolta._\n\n"
+        report_md += "_Ei rekisteröityjä konkurssimerkintöjä valitulta ajanjaksolta._\n\n"
 
-    report_md += "\n---\n*Raportti luotu automaattisesti PRH:n avoimen rajapinnan pohjalta.*"
+    report_md += "\n---\n*Raportti päivitetty automaattisesti Tilastokeskuksen StatFin-rajapinnasta.*"
     
     with open("reports/README.md", "w", encoding="utf-8") as f:
         f.write(report_md)
 
 def main():
     ensure_directories()
-    df = fetch_bankruptcies()
+    df = fetch_statfin_bankruptcies()
     
-    if not df.empty:
-        df_to_save = df.copy()
-        df_to_save["Rekisteröintipäivä"] = df_to_save["Rekisteröintipäivä"].dt.strftime("%Y-%m-%d")
-        df_to_save.to_csv("data/konkurssit_kumulatiivinen.csv", index=False, encoding="utf-8-sig")
-        print(f"Tallennettu {len(df)} riviä tiedostoon data/konkurssit_kumulatiivinen.csv")
-    else:
-        pd.DataFrame(columns=["Y-tunnus", "Yrityksen Nimi", "Kunta", "Toimiala", "Rekisteröintipäivä", "Kuukausi", "Tila"]).to_csv("data/konkurssit_kumulatiivinen.csv", index=False, encoding="utf-8-sig")
-        print("Ajo valmis.")
+    df.to_csv("data/konkurssit_kumulatiivinen.csv", index=False, encoding="utf-8-sig")
+    print(f"Tallennus valmis: {len(df)} riviä kirjoitettu tiedostoon data/konkurssit_kumulatiivinen.csv")
 
     generate_visualizations(df)
     generate_markdown_report(df)

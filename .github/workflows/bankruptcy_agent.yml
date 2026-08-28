@@ -1,10 +1,9 @@
-.github/workflows/bankruptcy_agent.yml
 name: "Satakunnan Konkurssiseuranta Agentti"
 
-on:
+'on':
   schedule:
     - cron: '0 6 1 * *'
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 jobs:
   run-bankruptcy-agent:
@@ -13,35 +12,23 @@ jobs:
       contents: write
 
     steps:
-      - name: "Tsekkaa koodi"
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: "Asenna Python"
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: "Asenna riippuvuudet"
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: "Suorita konkurssiseuranta-agentti"
-        run: |
-          python main.py
+      - name: "Suorita agentti"
+        run: python main.py
 
-      - name: "Tallenna muutokset repositorioom"
+      - name: "Tallenna raportit"
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action Bot"
           git add reports/ data/
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Automaattinen kuukausiraportti: $(date +'%Y-%m-%d')" && git push)
-
-      - name: "Tallenna artefaktina"
-        uses: actions/upload-artifact@v4
-        with:
-          name: konkurssiraportti-latest
-          path: |
-            reports/
-            data/
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Automaattinen kuukausiraportti" && git push)

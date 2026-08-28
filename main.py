@@ -6,32 +6,45 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from datetime import datetime
 
-# Seurattavat kunnat
 TARGET_MUNICIPALITIES = [
     "Kokemäki", "Harjavalta", "Nakkila", "Ulvila", "Pori",
     "Merikarvia", "Pomarkku", "Siikainen", "Karvia",
     "Kankaanpää", "Jämijärvi", "Eurajoki"
 ]
 
-# Tilastokeskuksen StatFin-konkurssitilaston PxWeb API
 STATFIN_API_URL = "https://pxdata.stat.fi:443/PxWeb/api/v1/fi/StatFin/konk/statfin_konk_pxt_12vh.json"
 
 def ensure_directories():
     os.makedirs("reports", exist_ok=True)
     os.makedirs("data", exist_ok=True)
 
-def fetch_statfin_bankruptcies():
-    """Hakee konkurssitilastot kuukausittain ja kunnittain Tilastokeskuksen rajapinnasta."""
-    print("Haetaan konkurssitilastoja Tilastokeskuksen (StatFin) rajapinnasta...")
+def df_to_markdown_custom(df):
+    """Luo Markdown-taulukon ilman tabulate-riippuvuutta."""
+    if df.empty:
+        return "_Ei dataa_\n"
     
-    # JSON-stat -kysely kohdekunnille ja vuoden 2026 kuukausille
+    headers = list(df.columns)
+    markdown_lines = []
+    
+    markdown_lines.append("| " + " | ".join(headers) + " |")
+    markdown_lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+    
+    for _, row in df.iterrows():
+        row_str = [str(val).replace("\n", " ") for val in row.values]
+        markdown_lines.append("| " + " | ".join(row_str) + " |")
+        
+    return "\n".join(markdown_lines)
+
+def fetch_statfin_bankruptcies():
+    print("Haetaan konkurssitilastoja Tilastokeskuksen rajapinnasta...")
+    
     query = {
         "query": [
             {
                 "code": "Alue",
                 "selection": {
                     "filter": "item",
-                    "values": [f"KU{m}" for m in ["408", "079", "531", "886", "609", "484", "608", "747", "230", "214", "181", "051"]] # Kuntakoodit
+                    "values": ["KU408", "KU079", "KU531", "KU886", "KU609", "KU484", "KU608", "KU747", "KU230", "KU214", "KU181", "KU051"]
                 }
             },
             {
@@ -74,31 +87,29 @@ def fetch_statfin_bankruptcies():
                         records.append({
                             "Kunta": m,
                             "Kuukausi": mo,
-                            "Konkurssien Määrä": int(val),
-                            "Toimiala": "Eri toimialat (Tilastokeskus)"
+                            "Konkurssien Määrä": int(val)
                         })
                     idx += 1
         else:
-            print(f"StatFin API palautti koodin {res.status_code}. Luodaan seurantarakenne.")
+            print(f"StatFin API palautti koodin {res.status_code}")
     except Exception as e:
         print(f"Virhe haettaessa StatFin-dataa: {e}")
 
-    # Jos StatFin-rajapinta ei ole vielä julkaissut tuoreimman kuukauden lukuja, pidetään rakenne voimassa
     df = pd.DataFrame(records)
     if df.empty:
-        df = pd.DataFrame(columns=["Kunta", "Kuukausi", "Konkurssien Määrä", "Toimiala"])
+        df = pd.DataFrame(columns=["Kunta", "Kuukausi", "Konkurssien Määrä"])
         
     return df
 
 def generate_visualizations(df):
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     
-    # Kuukausittainen diagrammi
+    # Kuukausittainen kaavio
     plt.figure(figsize=(10, 6))
-    if not df.empty and "Konkurssien Määrä" in df.columns:
+    if not df.empty and "Konkurssien Määrä" in df.columns and df["Konkurssien Määrä"].sum() > 0:
         monthly_sum = df.groupby("Kuukausi")["Konkurssien Määrä"].sum()
         ax = monthly_sum.plot(kind="bar", color="#1f77b4", edgecolor="#0d3b66", linewidth=1.2)
-        plt.title(f"Konkurssien määrä kuukausittain (1.1.2026 alkaen)\nSeurattavat 12 kuntaa", fontsize=11, pad=15)
+        plt.title("Konkurssien määrä kuukausittain (1.1.2026 alkaen)\nSeurattavat 12 kuntaa", fontsize=11, pad=15)
         plt.xlabel("Kuukausi", fontsize=11)
         plt.ylabel("Konkurssit (kpl)", fontsize=11)
         plt.xticks(rotation=0)
@@ -111,16 +122,16 @@ def generate_visualizations(df):
                             ha='center', va='bottom', fontsize=10, fontweight='bold', xytext=(0, 3), 
                             textcoords='offset points')
     else:
-        plt.text(0.5, 0.5, "Ei rekisteröityjä konkursseja seuranta-aikaväliltä.", horizontalalignment='center', verticalalignment='center', fontsize=12)
+        plt.text(0.5, 0.5, "Ei rekisteröityjä konkursseja valitulta ajalta.", horizontalalignment='center', verticalalignment='center', fontsize=12)
         plt.title("Konkurssit kuukausittain (2026)")
 
     plt.tight_layout()
     plt.savefig("reports/kuukausittaiset_konkurssit.png", dpi=300)
     plt.close()
 
-    # Kuntakohtainen jakauma
+    # Kuntakohtainen kaavio
     plt.figure(figsize=(10, 6))
-    if not df.empty and "Konkurssien Määrä" in df.columns:
+    if not df.empty and "Konkurssien Määrä" in df.columns and df["Konkurssien Määrä"].sum() > 0:
         muni_sum = df.groupby("Kunta")["Konkurssien Määrä"].sum().sort_values(ascending=False)
         ax = muni_sum.plot(kind="barh", color="#2ca02c", edgecolor="#1b661b", linewidth=1.2)
         plt.title("Konkurssit kunnittain (1.1.2026 alkaen)", fontsize=11, pad=15)
@@ -169,10 +180,10 @@ def generate_markdown_report(df):
 ## 📋 Yhteenvetotaulukko
 
 """
-    if not df.empty:
+    if not df.empty and "Konkurssien Määrä" in df.columns:
         total_count = df["Konkurssien Määrä"].sum()
         report_md += f"**Yhteensä rekisteröityjä konkursseja:** {total_count} kpl\n\n"
-        report_md += df.to_markdown(index=False) + "\n\n"
+        report_md += df_to_markdown_custom(df) + "\n\n"
     else:
         report_md += "_Ei rekisteröityjä konkurssimerkintöjä valitulta ajanjaksolta._\n\n"
 
@@ -186,7 +197,7 @@ def main():
     df = fetch_statfin_bankruptcies()
     
     df.to_csv("data/konkurssit_kumulatiivinen.csv", index=False, encoding="utf-8-sig")
-    print(f"Tallennus valmis: {len(df)} riviä kirjoitettu tiedostoon data/konkurssit_kumulatiivinen.csv")
+    print(f"Tallennus valmis: {len(df)} riviä tiedostoon data/konkurssit_kumulatiivinen.csv")
 
     generate_visualizations(df)
     generate_markdown_report(df)

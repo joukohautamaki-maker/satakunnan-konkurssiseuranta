@@ -1,7 +1,6 @@
-# Satakunnan ja lähialueiden yritys- ja konkurssiseuranta
+# Satakunnan ja lähialueiden konkurssiseuranta
 
-**Päivitetty:** 2026-08-28 13:43:27  
-**Aikaraja:** 1.1.2026 alkaen (Kumulatiivinen)  
+**Päivitetty:** 2026-08-28 13:53:08  
 **Seurattavat kunnat (12 kpl):** Eurajoki, Harjavalta, Jämijärvi, Kankaanpää, Karvia, Kokemäki, Merikarvia, Nakkila, Pomarkku, Pori, Siikainen, Ulvila
 
 ---
@@ -12,16 +11,16 @@
 
 ---
 
-## 🏭 Toimialajakauma
+## 🏛️ Konkurssit kunnittain
 
-![Konkurssit toimialoittain](konkurssit_toimialoittain.png)
+![Konkurssit kunnittain](konkurssit_toimialoittain.png)
 
 ---
 
 ## 📋 Yhteenvetotaulukko
 
-_Ei rekisteröityjä merkintöjä valitulta ajanjaksolta._
+_Ei rekisteröityjä konkurssimerkintöjä valitulta ajanjaksolta._
 
 
 ---
-*Raportti luotu automaattisesti PRH:n avoimen rajapinnan pohjalta.*
+*Raportti luotu automaattisesti Tilastokeskuksen avoimen rajapinnan pohjalta.*

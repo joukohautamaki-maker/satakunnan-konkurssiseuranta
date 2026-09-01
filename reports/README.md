@@ -1,6 +1,6 @@
 # Satakunnan ja lähialueiden konkurssiseuranta
 
-**Päivitetty:** 2026-08-28 13:53:08  
+**Päivitetty:** 2026-09-01 10:37:01  
 **Seurattavat kunnat (12 kpl):** Eurajoki, Harjavalta, Jämijärvi, Kankaanpää, Karvia, Kokemäki, Merikarvia, Nakkila, Pomarkku, Pori, Siikainen, Ulvila
 
 ---
